@@ -1,37 +1,55 @@
 #include <stdio.h>
-#include <cuda_runtime.h>
+#include <cuda.h>
 
 #define N 1024
+#define THREADS_PER_BLOCK 512
 
-__global__ void reduce_sum(float* input, float* output) {
-   // TODO: Implement this
+__global__ void reduce_sum(int *data) {
+    int tid = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + tid;
+
+    __shared__ int sdata[THREADS_PER_BLOCK];
+
+    sdata[tid] = data[i];
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            sdata[tid] += sdata[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        data[blockIdx.x] = sdata[0];
+    }
 }
 
 int main() {
-    float *h_input, *h_output; // host variables
-    float *d_input, *d_output; // device variables
-
-    size_t size = N * sizeof(float);
-    h_input = (float*) malloc(size);
-    h_output = (float*) malloc(sizeof(float));
+    int size = N * sizeof(int);
+    int *h_data = (int *)malloc(size);
 
     for (int i = 0; i < N; i++) {
-        h_input[i] = 1.0f;
+        h_data[i] = 1;
     }
 
-    cudaMalloc(&d_input, size);
-    cudaMalloc(&d_output, sizeof(float));
-    cudaMemcpy(d_input, h_input, size, cudaMemcpyHostToDevice);
+    int *d_data;
+    cudaMalloc((void **)&d_data, size);
+    cudaMemcpy(d_data, h_data, size, cudaMemcpyHostToDevice);
 
-    reduce_sum<<<1, N, N * sizeof(float)>>>(d_input, d_output);
+    int blocks = N / THREADS_PER_BLOCK;
+    reduce_sum<<<blocks, THREADS_PER_BLOCK>>>(d_data);
 
-    cudaMemcpy(h_output, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+    if (blocks > 1) {
+        reduce_sum<<<1, blocks>>>(d_data);
+    }
 
-    printf("Sum = %f\n", h_output[0]);
+    int result;
+    cudaMemcpy(&result, d_data, sizeof(int), cudaMemcpyDeviceToHost);
 
-    free(h_input);
-    free(h_output);
-    cudaFree(d_input);
-    cudaFree(d_output);
+    printf("Sum = %d\n", result);
+
+    cudaFree(d_data);
+    free(h_data);
     return 0;
 }
